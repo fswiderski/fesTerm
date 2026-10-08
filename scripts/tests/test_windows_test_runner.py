@@ -366,6 +366,10 @@ class NativeRunnerTests(unittest.TestCase):
                 (checkout / "scripts").mkdir(parents=True)
                 (checkout / "app" / "festerm").mkdir(parents=True)
                 (checkout / "target").mkdir()
+                previous = checkout / "target" / "pr345-native-capture" / "previous-run"
+                previous.mkdir(parents=True)
+                preserved = previous / "supervisor.json"
+                preserved.write_text('{"outcome":"preserved_fixture"}')
                 executable = checkout / "target" / "owned fixture.exe"
                 executable.write_bytes(b"never executed")
                 supervisor = checkout / "scripts" / "capture-pr345-native-exit.ps1"
@@ -375,6 +379,8 @@ class NativeRunnerTests(unittest.TestCase):
                 environment["FESTERM_FIXTURE_EXECUTABLE"] = str(executable)
                 environment["FESTERM_FIXTURE_FAIL_AT"] = str(fail_at)
                 environment.pop("CARGO_TARGET_DIR", None)
+                github_output = checkout / "fixture-github-output.txt"
+                environment["GITHUB_OUTPUT"] = str(github_output)
                 command = r"""
 function git {
     if ($args -contains 'status') { return }
@@ -400,9 +406,14 @@ try { & $env:FESTERM_FIXTURE_SUPERVISOR; exit 0 } catch { Write-Error $_; exit 1
                     [shell, "-NoProfile", "-NonInteractive", "-Command", command],
                     env=environment, capture_output=True, text=True, timeout=30, check=False,
                 )
-                report = json.loads(
-                    (checkout / "target" / "pr345-native-capture" / "supervisor.json").read_text(),
-                )
+                reports = [path for path in
+                           (checkout / "target" / "pr345-native-capture").glob("*/supervisor.json")
+                           if path != preserved]
+                self.assertEqual(len(reports), 1)
+                self.assertEqual(preserved.read_text(), '{"outcome":"preserved_fixture"}')
+                self.assertEqual(github_output.read_text().strip(),
+                                 f"metadata_directory={reports[0].parent}")
+                report = json.loads(reports[0].read_text())
                 self.assertEqual(result.returncode, 1 if fail_at else 0, result.stderr)
                 self.assertEqual(report["maximum_processes"], 6)
                 self.assertFalse(report["causal_repair_claimed"])

@@ -34,6 +34,14 @@ run, [37854116239](https://github.com/fswiderski/fesTerm/actions/runs/3785411623
 completed six traced processes without reproduction; it is preserved separately,
 not replaced by the subsequent paired experiment.
 
+The first paired job,
+[37857680629](https://github.com/fswiderski/fesTerm/actions/runs/37857680629),
+stopped at setup because the restored Cargo target already contained the
+capture parent directory. No app process ran, and this is not a reproduction.
+Each subsequent experiment uses a fresh GUID child directory, preserves all
+prior directories, and uploads only that experiment's top-level receipt JSONs.
+Missing directory output prevents uploading, rather than widening the glob.
+
 Only bounded content-free JSON metadata is uploaded. Build JSONL, ordinary
 stdout, PDBs and executable files are not artifacts. Native receipts retain
 module offsets when local symbols are

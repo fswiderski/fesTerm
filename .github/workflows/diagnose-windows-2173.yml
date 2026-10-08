@@ -33,13 +33,14 @@ jobs:
       - name: Calibrate original exit, owned cleanup and validation-ID privacy
         run: python -m unittest discover -s scripts/tests -p test_windows_test_runner.py -v
       - name: Compare bounded bare and traced full-workspace app processes
+        id: capture
         shell: pwsh
         run: .\scripts\capture-pr345-native-exit.ps1
       - name: Preserve bounded content-free metadata, including failures
-        if: always()
+        if: always() && steps.capture.outputs.metadata_directory != ''
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
           name: pr345-native-exit-metadata
-          path: target/pr345-native-capture/**/*.json
+          path: ${{ steps.capture.outputs.metadata_directory }}\*.json
           if-no-files-found: warn
           retention-days: 7

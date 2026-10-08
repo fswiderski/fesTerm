@@ -11,9 +11,12 @@ $tree = git rev-parse 'HEAD^{tree}'
 if (@(git status --porcelain --untracked-files=no).Count) {
     throw 'Diagnostic source must be clean and committed.'
 }
-$out = Join-Path $root 'target\pr345-native-capture'
+$out = Join-Path $root ('target\pr345-native-capture\' + [Guid]::NewGuid().ToString('N'))
 if (Test-Path -LiteralPath $out) { throw 'Preserve existing capture evidence.' }
 New-Item -ItemType Directory -Path $out | Out-Null
+if ($env:GITHUB_OUTPUT) {
+    Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "metadata_directory=$out" -Encoding utf8
+}
 $observations = [Collections.Generic.List[object]]::new()
 $report = [ordered]@{
     source_head=$head;source_tree=$tree;
