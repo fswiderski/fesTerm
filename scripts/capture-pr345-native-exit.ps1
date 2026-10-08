@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([ValidateRange(1,6)][int] $Iterations = 6)
+param([ValidateRange(1,3)][int] $Pairs = 3)
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -20,7 +20,7 @@ $report = [ordered]@{
     logical_candidate_base='bfa31bba84676151092f8d434bde008674017415';
     cargo_build_scope='cargo test --locked --workspace --no-run --message-format json';
     libtest_scope='complete app executable; default concurrency and capture';
-    requested_iterations=$Iterations;outcome='building';
+    requested_pairs=$Pairs;maximum_processes=2*$Pairs;outcome='building';
     causal_repair_claimed=$false;observations=@()
 }
 function Save-Report {
@@ -44,27 +44,32 @@ try {
     $hash = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
     $report.executable = [ordered]@{name=[IO.Path]::GetFileName($executable);sha256=$hash}
     Set-Location (Join-Path $root 'app\festerm')
-    for ($iteration = 1; $iteration -le $Iterations; $iteration++) {
-        if ((git -C $root rev-parse HEAD) -cne $head -or
-            (git -C $root rev-parse 'HEAD^{tree}') -cne $tree -or
-            @(git -C $root status --porcelain --untracked-files=no).Count -or
-            (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -cne $hash) {
-            throw 'Source or original executable changed during capture.'
+    for ($pair = 1; $pair -le $Pairs; $pair++) {
+        $modes = if ($pair % 2) {@('bare','traced')} else {@('traced','bare')}
+        foreach ($mode in $modes) {
+            if ((git -C $root rev-parse HEAD) -cne $head -or
+                (git -C $root rev-parse 'HEAD^{tree}') -cne $tree -or
+                @(git -C $root status --porcelain --untracked-files=no).Count -or
+                (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash -cne $hash) {
+                throw 'Source or original executable changed during capture.'
+            }
+            $started = Get-Date
+            $captureArguments = @('--output-root', $out, '--timeout-seconds', '300')
+            $captureArguments += if ($mode -eq 'bare') {'--bare'} else {'--d3d12-validation-ids'}
+            python (Join-Path $PSScriptRoot 'windows_test_runner.py') @captureArguments -- $executable
+            $code = $LASTEXITCODE
+            $observations.Add([ordered]@{
+                pair=$pair;mode=$mode;runner_exit_code=$code;
+                duration_seconds=((Get-Date)-$started).TotalSeconds
+            })
+            $report.outcome = if ($code -eq 0) {'no_native_failure_observed_yet'} else {'nonzero_original_execution_preserved'}
+            Save-Report
+            if ($code -ne 0) { throw "Original app execution returned $code; stop and inspect native metadata. No retry." }
         }
-        $started = Get-Date
-        python (Join-Path $PSScriptRoot 'windows_test_runner.py') --output-root $out --timeout-seconds 300 -- $executable
-        $code = $LASTEXITCODE
-        $observations.Add([ordered]@{
-            iteration=$iteration;runner_exit_code=$code;
-            duration_seconds=((Get-Date)-$started).TotalSeconds
-        })
-        $report.outcome = if ($code -eq 0) {'no_native_failure_observed_yet'} else {'nonzero_original_execution_preserved'}
-        Save-Report
-        if ($code -ne 0) { throw "Original app execution returned $code; stop and inspect native metadata. No retry." }
     }
     $report.outcome = 'bounded_control_completed_without_reproduction_not_a_repair'
     Save-Report
-    Write-Output 'Bounded diagnostic completed without reproduction. This does not repair exit 2173 or unblock PR345.'
+    Write-Output 'Bounded paired diagnostic completed without reproduction. This does not repair exit 2173 or unblock PR345.'
 } finally {
     Save-Report
     Set-Location $root

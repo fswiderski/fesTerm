@@ -15,6 +15,10 @@ internal static class ExitProbe
     private static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint allocation, uint protection);
     [DllImport("ntdll.dll")]
     private static extern uint RtlGetNtGlobalFlags();
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true)]
+    private static extern void OutputDebugStringA(string text);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern void OutputDebugStringW(string text);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void Fault();
 
@@ -24,6 +28,12 @@ internal static class ExitProbe
         Console.WriteLine("test fixture::completed ... ok");
         Console.WriteLine("private-payload-must-not-enter-receipts");
         if (mode == "pass") return 0;
+        if (mode == "validation-ids") {
+            OutputDebugStringA("private-payload-debug-string-must-not-enter-receipts");
+            OutputDebugStringA("D3D12 ERROR: private-payload-resource-path [ EXECUTION ERROR #739: EXECUTECOMMANDLISTS_COMMANDLISTMISMATCH ]\n");
+            OutputDebugStringW("D3D12 WARNING: private-payload-\ud83d\ude80 [ STATE_CREATION WARNING #698: CREATE_RESOURCE_INVALID_CLEAR_VALUE ]\n");
+            return 2173;
+        }
         if (mode == "heap") {
             Console.WriteLine("DEBUG_HEAP_FLAGS=" + (RtlGetNtGlobalFlags() & 0x70));
             return 0;

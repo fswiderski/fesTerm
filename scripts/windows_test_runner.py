@@ -115,7 +115,39 @@ def read_output(fd, destination, context):
         os.close(fd)
 
 
-def run_debugger(debugger, executable, arguments, timeout, context):
+def run_bare(debugger, executable, arguments, timeout, stdout, stderr):
+    child = subprocess.Popen(
+        [str(executable), *arguments], cwd=Path.cwd(), stdin=sys.stdin,
+        stdout=stdout, stderr=stderr, close_fds=True,
+    )
+    debugger.process, debugger.pid = int(child._handle), child.pid
+    debugger.record["pid"] = child.pid
+    debugger.record["debug_heap_policy"] = "ordinary_process_no_debugger"
+    try:
+        debugger.started = debugger.creation_time(debugger.process)
+        try:
+            code = child.wait(timeout=timeout) & 0xffffffff
+        except subprocess.TimeoutExpired:
+            debugger.record["outcome"] = "timeout"
+            debugger.cleanup_tree()
+            child.wait(timeout=10)
+            return 124
+        debugger.record["exit_code_unsigned"] = code
+        debugger.note("process_exited", exit_code=code)
+        debugger.record["cleanup"] = "root_exited"
+        return code
+    finally:
+        if child.poll() is None:
+            if hasattr(debugger, "started"):
+                debugger.cleanup_tree()
+            else:
+                debugger.check(debugger.terminate(debugger.process, 125), "cleanup_bare_root")
+            child.wait(timeout=10)
+            debugger.record["cleanup"] = "owned_tree_exited_after_runner_error"
+        debugger.process = None
+
+
+def run_debugger(debugger, executable, arguments, timeout, context, bare=False):
     import msvcrt
 
     readers, write_fds = [], []
@@ -131,6 +163,8 @@ def run_debugger(debugger, executable, arguments, timeout, context):
             )
             thread.start()
             readers.append(thread)
+        if bare:
+            return run_bare(debugger, executable, arguments, timeout, *write_fds)
         return debugger.run(
             str(executable), arguments, str(Path.cwd()), timeout, *handles,
             msvcrt.get_osfhandle(sys.stdin.fileno()),
@@ -162,6 +196,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--timeout-seconds", type=float, default=1800)
+    parser.add_argument("--bare", action="store_true")
+    parser.add_argument("--d3d12-validation-ids", action="store_true")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command
@@ -169,6 +205,8 @@ def main(argv=None):
         command = command[1:]
     if not 0 < args.timeout_seconds <= 14400 or not command:
         parser.error("requires a command and timeout in (0, 14400]")
+    if args.bare and args.d3d12_validation_ids:
+        parser.error("D3D12 validation IDs require traced execution")
     executable = Path(command[0]).resolve()
     if not executable.is_file():
         parser.error("executable does not exist")
@@ -194,7 +232,7 @@ def main(argv=None):
     code = 125
     try:
         try:
-            debugger = NativeDebugger(record)
+            debugger = NativeDebugger(record, d3d12_validation_ids=args.d3d12_validation_ids)
         except (OSError, AttributeError, NotImplementedError) as error:
             # No success-shaped fallback or retry. The target has not started.
             record["capture_status"] = "unavailable"
@@ -202,8 +240,10 @@ def main(argv=None):
             record["cleanup"] = "not_started"
             print("ERROR: native diagnostics unavailable; target not started.", file=sys.stderr)
         else:
-            record["capture_status"] = "captured"
-            code = run_debugger(debugger, executable, command[1:], args.timeout_seconds, context)
+            record["capture_status"] = "not_requested_bare_control" if args.bare else "captured"
+            code = run_debugger(
+                debugger, executable, command[1:], args.timeout_seconds, context, bare=args.bare,
+            )
             if record.get("outcome") == "timeout":
                 code = 124
     except Exception as error:

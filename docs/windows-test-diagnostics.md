@@ -22,13 +22,17 @@ based on this runner or another green rerun.**
 ## Required CI and local execution
 
 The temporary PR345 diagnostic branch calibrates this reviewed runner and
-then launches at most six complete app-test processes, stopping on the first
-nonzero execution. The executable is selected from a full-workspace `--no-run`
+then launches at most three bare/traced pairs (six complete app-test processes),
+alternating pair order and stopping on the first nonzero execution, including
+before a partner can run. The executable is selected from a full-workspace `--no-run`
 build to preserve Cargo feature unification; its original package working
 directory, libtest scope, capture, concurrency and level-zero CI profiles stay
 unchanged. The required CI workflow and production Rust sources are unchanged.
 This is a capture experiment, not a causal repair or merge qualification:
-successful controls cannot unblock PR345 or close #330.
+successful controls cannot unblock PR345 or close #330. The first diagnostic
+run, [37854116239](https://github.com/fswiderski/fesTerm/actions/runs/37854116239),
+completed six traced processes without reproduction; it is preserved separately,
+not replaced by the subsequent paired experiment.
 
 Only bounded content-free JSON metadata is uploaded. Build JSONL, ordinary
 stdout, PDBs and executable files are not artifacts. Native receipts retain
@@ -92,6 +96,25 @@ source/file paths, command arguments, environment dumps, machine/user names,
 Application/WER event messages and installed-user journals are excluded.
 Debugger memory reads are used internally for PE metadata/unwinding and probe
 instruction restoration; those bytes are never written into receipts.
+
+The temporary PR345 experiment additionally opts into
+`--d3d12-validation-ids`: at most 256 root debug strings of at most 4,096
+characters are read internally. Only canonical D3D12 validation records are
+recognized, and at most 64 distinct numeric category/severity/message-ID/thread
+tuples and bounded occurrence counts are retained. All message text, resource
+names and paths are immediately discarded and never copied into receipts,
+console output or error details. Read failures and exhausted bounds explicitly
+mark this optional capture partial. Without this flag, debug strings are not
+read at all. Observed IDs are not trusted provenance, active-test attribution
+or a diagnosed cause. Deliberately private ANSI/Unicode calibration messages
+prove this boundary and preserve the fixture's original exit 2173.
+
+The `--bare` control uses ordinary, uninstrumented child creation and the same
+output/result-line handling. It reports the original DWORD but explicitly has
+no debugger/module/stack capture. Its timeout/error cleanup reuses the same
+creation-time-verified, pinned-handle owned-tree logic. It cannot be combined
+with validation-ID capture. Neither mode changes Windows debug-layer break
+settings, filters, registry, endpoint protection, assertions or concurrency.
 
 The `windows-native-test-metadata` artifact uploads only receipt JSONs, even
 on failure, with seven-day retention. Existing snapshot artifacts remain

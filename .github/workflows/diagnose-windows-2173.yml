@@ -30,9 +30,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: pr345-native-capture
-      - name: Calibrate actual exit, exception, heap and cleanup evidence
+      - name: Calibrate original exit, owned cleanup and validation-ID privacy
         run: python -m unittest discover -s scripts/tests -p test_windows_test_runner.py -v
-      - name: Capture the full-workspace feature-parity app scope
+      - name: Compare bounded bare and traced full-workspace app processes
         shell: pwsh
         run: .\scripts\capture-pr345-native-exit.ps1
       - name: Preserve bounded content-free metadata, including failures

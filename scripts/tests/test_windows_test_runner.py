@@ -19,7 +19,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 import windows_test_runner as runner
-from windows_native_debug import NativeDebugger
+from windows_native_debug import DEBUG_STRING_INFO, NativeDebugger, d3d12_validation_message
 
 
 class ReceiptTests(unittest.TestCase):
@@ -62,6 +62,7 @@ class ReceiptTests(unittest.TestCase):
 
     def test_invalid_arguments_never_launch_a_target(self):
         for extra in ([], ["--timeout-seconds", "0", "--", sys.executable],
+                      ["--bare", "--d3d12-validation-ids", "--", str(self.executable)],
                       ["--", str(self.directory / "missing.exe")], ["--", sys.executable]):
             with self.subTest(extra=extra), patch.object(runner, "NativeDebugger") as debugger, \
                  contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
@@ -69,6 +70,16 @@ class ReceiptTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             debugger.assert_not_called()
         self.assertFalse(list(self.directory.glob("*.json")))
+
+    def test_validation_parser_keeps_only_allowlisted_numeric_fields(self):
+        message = "D3D12 ERROR: private-payload [ EXECUTION ERROR #739: COMMANDLISTMISMATCH ]\r\n"
+        self.assertEqual(d3d12_validation_message(message),
+                         {"category": 9, "severity": 1, "message_id": 739})
+        for text in ("private-payload", message.replace("EXECUTION", "PRIVATE_CATEGORY"),
+                     message.replace("#739", "#99999"), message.replace("ERROR #", "INFO #"),
+                     message.replace("D3D12", "D3D11"), message * 100):
+            with self.subTest(text=text[:32]):
+                self.assertIsNone(d3d12_validation_message(text))
 
     def test_parallel_context_discards_arbitrary_output_and_bounds_names(self):
         context = runner.TestContext()
@@ -129,11 +140,13 @@ class NativeRunnerTests(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.directory)
 
-    def execute(self, mode, timeout=20, environment=None):
+    def execute(self, mode, timeout=20, environment=None, bare=False, validation_ids=False):
         output = self.directory / uuid.uuid4().hex
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "windows_test_runner.py"),
              "--output-root", str(output), "--timeout-seconds", str(timeout),
+             *(["--bare"] if bare else []),
+             *(["--d3d12-validation-ids"] if validation_ids else []),
              "--", str(self.executable), mode],
             cwd=ROOT, env=environment, capture_output=True, text=True, timeout=40, check=False,
         )
@@ -141,12 +154,66 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(len(receipts), 1, result.stdout + result.stderr)
         text = receipts[0].read_text()
         receipt = json.loads(text)
-        self.assertEqual(receipt["capture_status"], "captured", result.stdout + result.stderr + text)
+        self.assertEqual(receipt["capture_status"],
+                         "not_requested_bare_control" if bare else "captured",
+                         result.stdout + result.stderr + text)
         self.assertNotIn("private-payload", text)
         self.assertNotIn(str(self.directory), text)
         self.assertEqual(receipt["executable"]["name"], "exit-probe.exe")
         self.assertRegex(receipt["executable"]["sha256"], r"^[0-9a-f]{64}$")
         return result, receipt
+
+    def test_bare_control_preserves_original_status_without_debugger_evidence(self):
+        for mode, code, outcome in (
+            ("pass", 0, "passed"), ("failure", 101, "rust_test_failure"),
+            ("exit", 2173, "native_exit_unknown_cause"),
+            ("terminate", 0xc0000005, "native_exit_unknown_cause"),
+        ):
+            with self.subTest(mode=mode):
+                result, receipt = self.execute(mode, bare=True)
+                self.assertEqual(result.returncode & 0xffffffff, code, result.stderr)
+                self.assertEqual(receipt["exit_code_unsigned"], code)
+                self.assertEqual(receipt["outcome"], outcome)
+                self.assertEqual(receipt["modules"], [])
+                self.assertEqual([event["kind"] for event in receipt["events"]], ["process_exited"])
+
+    def test_real_debug_strings_preserve_only_validation_ids_and_original_failure(self):
+        result, receipt = self.execute("validation-ids", validation_ids=True)
+        self.assertEqual(result.returncode, 2173, result.stderr)
+        self.assertEqual(receipt["outcome"], "native_exit_unknown_cause")
+        messages = receipt["d3d12_validation"]["messages"]
+        self.assertEqual({message["message_id"] for message in messages}, {698, 739})
+        self.assertTrue(all(set(message) == {"category", "severity", "message_id", "tid", "count"}
+                            for message in messages))
+        _, disabled = self.execute("validation-ids")
+        self.assertNotIn("d3d12_validation", disabled)
+
+    def test_validation_debug_reads_and_distinct_ids_are_bounded_and_failures_explicit(self):
+        record = {"events": [], "modules": []}
+        debugger = NativeDebugger(record, d3d12_validation_ids=True)
+        info = DEBUG_STRING_INFO(1, 0, 100)
+        for number in range(70):
+            raw = f"D3D12 ERROR: private-payload [ EXECUTION ERROR #{number}: FIXTURE ]".encode()
+            info.length = len(raw)
+            with patch.object(debugger, "memory", return_value=raw):
+                debugger.debug_string(info, 42)
+        metadata = record["d3d12_validation"]
+        self.assertEqual(len(metadata["messages"]), 64)
+        self.assertTrue(metadata["truncated"])
+        with patch.object(debugger, "memory", side_effect=OSError("private-payload")):
+            debugger.debug_string(info, 42)
+        self.assertEqual(metadata["read_failures"], 1)
+        self.assertEqual(metadata["capture_status"], "partial")
+        metadata["reads"] = 256
+        with patch.object(debugger, "memory") as read:
+            debugger.debug_string(info, 42)
+        read.assert_not_called()
+        self.assertNotIn("private-payload", json.dumps(record))
+        metadata["reads"] = 0
+        info.length = 4097
+        with patch.object(debugger, "memory") as read:
+            debugger.debug_string(info, 42)
+        read.assert_not_called()
 
     def test_debugger_startup_preserves_bare_windows_heap_policy(self):
         bare = subprocess.run(
@@ -227,11 +294,16 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(receipt["exit_code_unsigned"], result.returncode & 0xffffffff)
 
     def test_timeout_removes_owned_child_but_not_unrelated_sentinel(self):
+        for bare in (False, True):
+            with self.subTest(bare=bare):
+                self.check_timeout_cleanup(bare)
+
+    def check_timeout_cleanup(self, bare):
         sentinel = subprocess.Popen(
             [str(self.executable), "sleep"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         try:
-            result, receipt = self.execute("tree", timeout=2)
+            result, receipt = self.execute("tree", timeout=2, bare=bare)
             self.assertEqual(result.returncode, 124, result.stderr)
             self.assertEqual(receipt["outcome"], "timeout")
             child = int(re.search(r"FIXTURE_CHILD_PID=(\d+)", result.stdout)[1])
@@ -270,6 +342,75 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(receipt["outcome"], "runner_error")
         self.assertEqual(receipt["cleanup"], "owned_tree_exited_after_runner_error")
         self.assertNotIn("exit_code_unsigned", receipt, "forced cleanup is not an original target exit")
+
+    def test_bare_setup_error_terminates_only_its_owned_root_without_original_exit_claim(self):
+        output = self.directory / uuid.uuid4().hex
+        with patch.object(NativeDebugger, "creation_time", side_effect=OSError("private failure")), \
+             contextlib.redirect_stderr(io.StringIO()):
+            code = runner.main([
+                "--output-root", str(output), "--bare", "--", str(self.executable), "sleep",
+            ])
+        receipt = json.loads(next(output.glob("*.json")).read_text())
+        self.assertEqual(code, 125)
+        self.assertEqual(receipt["outcome"], "runner_error")
+        self.assertEqual(receipt["cleanup"], "owned_tree_exited_after_runner_error")
+        self.assertNotIn("exit_code_unsigned", receipt)
+        self.assertNotIn("private failure", json.dumps(receipt))
+
+    def test_capture_supervisor_has_six_process_bound_and_stops_before_failed_partner(self):
+        shell = shutil.which("pwsh")
+        self.assertIsNotNone(shell)
+        for fail_at in (0, 1, 2):
+            with self.subTest(fail_at=fail_at):
+                checkout = self.directory / uuid.uuid4().hex
+                (checkout / "scripts").mkdir(parents=True)
+                (checkout / "app" / "festerm").mkdir(parents=True)
+                (checkout / "target").mkdir()
+                executable = checkout / "target" / "owned fixture.exe"
+                executable.write_bytes(b"never executed")
+                supervisor = checkout / "scripts" / "capture-pr345-native-exit.ps1"
+                shutil.copyfile(ROOT / "scripts" / supervisor.name, supervisor)
+                environment = os.environ.copy()
+                environment["FESTERM_FIXTURE_SUPERVISOR"] = str(supervisor)
+                environment["FESTERM_FIXTURE_EXECUTABLE"] = str(executable)
+                environment["FESTERM_FIXTURE_FAIL_AT"] = str(fail_at)
+                environment.pop("CARGO_TARGET_DIR", None)
+                command = r"""
+function git {
+    if ($args -contains 'status') { return }
+    if ($args[-1] -eq 'HEAD') { 'fixture-head' } else { 'fixture-tree' }
+}
+function cargo {
+    @{reason='compiler-artifact';target=@{name='festerm'};profile=@{test=$true};
+      executable=$env:FESTERM_FIXTURE_EXECUTABLE} | ConvertTo-Json -Compress
+    $global:LASTEXITCODE = 0
+}
+$global:count = 0
+function python {
+    $global:count++
+    $mode = if ($global:count -in 1,4,5) {'--bare'} else {'--d3d12-validation-ids'}
+    if ($args[-1] -ne $env:FESTERM_FIXTURE_EXECUTABLE -or $args -notcontains $mode) {
+        throw 'Original executable argument boundary changed'
+    }
+    $global:LASTEXITCODE = if ($global:count -eq [int]$env:FESTERM_FIXTURE_FAIL_AT) {2173} else {0}
+}
+try { & $env:FESTERM_FIXTURE_SUPERVISOR; exit 0 } catch { Write-Error $_; exit 1 }
+"""
+                result = subprocess.run(
+                    [shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                    env=environment, capture_output=True, text=True, timeout=30, check=False,
+                )
+                report = json.loads(
+                    (checkout / "target" / "pr345-native-capture" / "supervisor.json").read_text(),
+                )
+                self.assertEqual(result.returncode, 1 if fail_at else 0, result.stderr)
+                self.assertEqual(report["maximum_processes"], 6)
+                self.assertFalse(report["causal_repair_claimed"])
+                expected = ["bare", "traced", "traced", "bare", "bare", "traced"]
+                self.assertEqual([item["mode"] for item in report["observations"]],
+                                 expected[:fail_at] if fail_at else expected)
+                if fail_at:
+                    self.assertEqual(report["observations"][-1]["runner_exit_code"], 2173)
 
     def test_powershell_cargo_routing_keeps_argument_boundaries_and_failure(self):
         shell = shutil.which("pwsh")

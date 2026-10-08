@@ -5,6 +5,7 @@ from ctypes import wintypes as W
 import os
 from pathlib import Path
 import platform
+import re
 import struct
 import time
 import uuid
@@ -67,11 +68,15 @@ class LOAD_DLL_INFO(C.Structure):
     ]
 
 
+class DEBUG_STRING_INFO(C.Structure):
+    _fields_ = [("address", HANDLE), ("unicode", W.WORD), ("length", W.WORD)]
+
+
 class EVENT_DATA(C.Union):
     _fields_ = [
         ("exception", EXCEPTION_INFO), ("process", CREATE_PROCESS_INFO),
         ("thread", CREATE_THREAD_INFO), ("dll", LOAD_DLL_INFO),
-        ("exit_code", DWORD), ("unload_base", HANDLE),
+        ("exit_code", DWORD), ("unload_base", HANDLE), ("debug_string", DEBUG_STRING_INFO),
     ]
 
 
@@ -129,10 +134,34 @@ def bind(dll, name, result, *args):
     return function
 
 
+def d3d12_validation_message(text):
+    categories = (
+        "APPLICATION_DEFINED", "MISCELLANEOUS", "INITIALIZATION", "CLEANUP",
+        "COMPILATION", "STATE_CREATION", "STATE_SETTING", "STATE_GETTING",
+        "RESOURCE_MANIPULATION", "EXECUTION", "SHADER",
+    )
+    severities = ("CORRUPTION", "ERROR", "WARNING", "INFO", "MESSAGE")
+    if len(text) > 4096:
+        return None
+    match = re.fullmatch(
+        r"D3D12 (CORRUPTION|ERROR|WARNING|INFO|MESSAGE):[^\0\r\n]*"
+        r"\[\s*([A-Z_]{1,32})\s+\1 #([0-9]{1,5}): "
+        r"[A-Z0-9_]{1,160}\s*\]\s*",
+        text.rstrip("\0\r\n"),
+    )
+    if not match or match[2] not in categories or int(match[3]) > 65535:
+        return None
+    return {
+        "category": categories.index(match[2]),
+        "severity": severities.index(match[1]),
+        "message_id": int(match[3]),
+    }
+
+
 class NativeDebugger:
     """One debuggee, unchanged exception handling and original DWORD exit."""
 
-    def __init__(self, record, event_limit=512):
+    def __init__(self, record, event_limit=512, d3d12_validation_ids=False):
         if os.name != "nt" or C.sizeof(HANDLE) != 8 or platform.machine().lower() not in ("amd64", "x86_64"):
             raise NotImplementedError("requires 64-bit Windows Python")
         # Explicit System32 loading; no PATH/working-directory DLL lookup.
@@ -151,6 +180,12 @@ class NativeDebugger:
         self.retired_probes = {}
         self.symbols = False
         self.stack_captures = 0
+        self.capture_validation_ids = d3d12_validation_ids
+        if d3d12_validation_ids:
+            self.record["d3d12_validation"] = {
+                "capture_status": "enabled_not_a_diagnosis", "reads": 0,
+                "read_failures": 0, "truncated": False, "messages": [],
+            }
         self._bind()
 
     def _bind(self):
@@ -248,6 +283,35 @@ class NativeDebugger:
         if got.value != size:
             raise OSError("short metadata read")
         return buffer.raw
+
+    def debug_string(self, info, tid):
+        metadata = self.record["d3d12_validation"]
+        if metadata["reads"] >= 256 or not 0 < info.length <= 4096:
+            metadata["truncated"] = True
+            metadata["capture_status"] = "partial"
+            return
+        metadata["reads"] += 1
+        try:
+            raw = self.memory(info.address, info.length * (2 if info.unicode else 1))
+        except OSError:
+            metadata["read_failures"] += 1
+            metadata["capture_status"] = "partial"
+            return
+        message = d3d12_validation_message(
+            raw.decode("utf-16-le" if info.unicode else "latin-1", errors="replace"),
+        )
+        if message is None:
+            return
+        message["tid"] = tid
+        for previous in metadata["messages"]:
+            if all(previous[key] == value for key, value in message.items()):
+                previous["count"] += 1
+                return
+        if len(metadata["messages"]) < 64:
+            metadata["messages"].append({**message, "count": 1})
+        else:
+            metadata["truncated"] = True
+            metadata["capture_status"] = "partial"
 
     def patch(self, address, data):
         buffer = C.create_string_buffer(data)
@@ -597,7 +661,8 @@ class NativeDebugger:
                         self.record["exit_code_unsigned"] = data.exit_code
                         self.note("process_exited", tid=event.tid, exit_code=data.exit_code)
                         exited = True
-                    # OUTPUT_DEBUG_STRING is deliberately not read or persisted.
+                    elif kind == 8 and self.capture_validation_ids:
+                        self.debug_string(data.debug_string, event.tid)
                 finally:
                     self.check(
                         self.continue_event(event.pid, event.tid, continuation),
