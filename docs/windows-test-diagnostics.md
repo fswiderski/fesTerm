@@ -23,11 +23,9 @@ based on this runner or another green rerun.**
 
 Windows CI calibrates the runner with non-GPU deterministic fixtures, then uses
 it for the workspace, retained-renderer and excluded font-atlas Cargo tests.
-Linux/macOS commands and the existing level-zero CI dev/test debug-info policy
-are unchanged. Native receipts retain module offsets when local symbols are
-unavailable; local level-1 builds can provide PDB-backed symbol names without
-changing the CI workload. Neither PDBs nor executables are uploaded by this
-integration.
+Linux/macOS commands and debug-info policy are unchanged. Windows retains
+level-1 dev/test debug info for local PDB-backed symbol lookup. Neither PDBs
+nor executables are uploaded by this integration.
 
 From a PowerShell session, pass an actual argument array:
 

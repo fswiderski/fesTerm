@@ -84,10 +84,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     env:
-      # Preserve this diagnostic slice's existing compile/link policy.
-      # Native receipts use module offsets when local symbols are unavailable.
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_TEST_DEBUG: "0"
+      # Windows keeps line-table debug info for the content-free native test
+      # runner; PDBs and dumps are never uploaded. Other platforms retain the
+      # previous compile/link policy, and local profiles remain unchanged.
+      CARGO_PROFILE_DEV_DEBUG: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
+      CARGO_PROFILE_TEST_DEBUG: ${{ matrix.os == 'windows-latest' && '1' || '0' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: dtolnay/rust-toolchain@stable
