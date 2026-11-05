@@ -310,6 +310,21 @@ pub struct Broker {
     presentation: PresentationState,
 }
 
+fn is_direct_input_only_approval(request: &GrantRequest) -> bool {
+    request.scope.control.len() == 1
+        && request.bindings.len() == 1
+        && request.bindings.iter().all(|binding| {
+            matches!(
+                binding.invocation,
+                Invocation::DirectInput { target, .. }
+                    if request.scope.control.contains(&target)
+            )
+        })
+        && request.direct_read_calls.is_empty()
+        && !request.scope.invoke_workflows
+        && !request.scope.return_results
+}
+
 impl Broker {
     /// The application supplies a fresh unpredictable instance nonce at startup.
     /// Never reuse it across broker instances or accept it from a client.
@@ -989,7 +1004,12 @@ impl Broker {
                 return Err(Error::Revoked);
             }
         }
-        if approval.lifetime.is_zero() || approval.lifetime > MAX_GRANT_LIFETIME {
+        let max_lifetime = if is_direct_input_only_approval(&approval.request) {
+            MAX_DIRECT_CONTROL_GRANT_LIFETIME
+        } else {
+            MAX_GRANT_LIFETIME
+        };
+        if approval.lifetime.is_zero() || approval.lifetime > max_lifetime {
             return Err(Error::InvalidRequest);
         }
         Self::validate_closure(

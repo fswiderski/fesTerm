@@ -115,8 +115,9 @@ production support.
   policy; untrusted client names/claims and unknown capabilities refuse;
   Advanced selections narrow authority; status remains independent of control;
   target replacement requires rebind; revocation, privacy loss and disconnect
-  cut runtime authority and queued delivery; 15-minute expiry and until-revoked
-  policy obey distinct lifecycle rules.
+  cut runtime authority and queued delivery; exact direct-input approvals may
+  remain armed for up to 15 minutes while other ordinary grants retain the
+  five-minute ceiling; until-revoked policy obeys its distinct lifecycle rules.
 - **Native/manual evidence required:** Extend desktop MCP checks for key
   pairing, requested/default and Advanced permission review, reconnect,
   revocation, lock/sleep and target replacement on each supported platform.

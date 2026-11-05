@@ -2796,6 +2796,62 @@ fn direct_input_requires_exact_native_handoff_without_workflow_or_observation() 
 }
 
 #[test]
+fn direct_input_native_approval_allows_fifteen_minutes_but_other_grants_remain_capped() {
+    let mut f = Fixture::new();
+    let target = f.b;
+    let request = GrantRequest {
+        scope: input_scope(target),
+        bindings: BTreeSet::from([direct_input(target, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let approval_id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            approval_id,
+            NativeApproval::new(request, MAX_DIRECT_CONTROL_GRANT_LIFETIME)
+                .accept_control_handoff(target, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    f.broker
+        .native_control_grant(f.connection, target, f.now)
+        .unwrap();
+    f.now += MAX_DIRECT_CONTROL_GRANT_LIFETIME;
+    assert_eq!(
+        f.broker.native_control_grant(f.connection, target, f.now),
+        Err(Error::Expired)
+    );
+
+    let mut f = Fixture::new();
+    let target = f.b;
+    let request = GrantRequest {
+        scope: Scope {
+            discover: BTreeSet::from([target]),
+            ..Scope::default()
+        },
+        bindings: BTreeSet::from([direct(DirectKind::Discovery)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let approval_id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            approval_id,
+            NativeApproval::new(request, MAX_DIRECT_CONTROL_GRANT_LIFETIME),
+            f.now,
+        ),
+        Err(Error::InvalidRequest)
+    );
+}
+
+#[test]
 fn direct_input_binds_parameters_target_lease_and_exact_committed_input() {
     let mut f = Fixture::new();
     let mut scope = f.scope();

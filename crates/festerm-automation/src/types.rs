@@ -7,6 +7,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub const MAX_GRANT_LIFETIME: Duration = Duration::from_secs(300);
+pub const MAX_DIRECT_CONTROL_GRANT_LIFETIME: Duration = Duration::from_secs(900);
 pub const MAX_PAYLOAD_BYTES: u32 = 65_536;
 pub const MAX_OBSERVATION_BYTES: u32 = 32_768;
 pub const MAX_INPUT_BYTES: u32 = 16_384;

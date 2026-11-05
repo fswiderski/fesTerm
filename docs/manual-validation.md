@@ -2864,7 +2864,8 @@ on Unix to isolate the broker endpoint) containing `schema_version = 1` and
    Expect reads of only that terminal; revoke and expect refusal.
 3. With controller registration enabled, register, associate one local
    terminal, request input, verify the escaped review text and approve. Expect
-   exactly one write; cancel a second request and expect no write.
+   exactly one write; confirm that only the same action remains armed for at
+   most 15 minutes; cancel a second request and expect no write.
 4. While a grant is live, lock the screen (macOS `Ctrl-Cmd-Q`; Linux
    `loginctl lock-session`; Windows `Win-L`) and separately sleep the machine.
    Expect Settings to show privacy loss, the channel to close and no access
