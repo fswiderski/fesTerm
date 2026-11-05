@@ -275,6 +275,7 @@
         "successful_and_exceptional_completion_release_the_invocations_own_lease",
         "direct_input_requires_exact_native_handoff_without_workflow_or_observation",
         "direct_input_native_approval_allows_fifteen_minutes_but_other_grants_remain_capped",
+        "direct_input_until_revoked_grant_survives_time_but_not_explicit_revocation",
         "direct_input_binds_parameters_target_lease_and_exact_committed_input",
         "direct_read_policy_never_authorizes_a_direct_input_action",
         "direct_input_is_one_request_even_after_abort_settlement_or_lost_response",

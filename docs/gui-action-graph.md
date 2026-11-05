@@ -356,11 +356,14 @@ and source expiry or retirement reject the staged review. Synthetic confirmation
 can publish one frozen action to the controlled backend and exposes disarm; its
 response is admission, refusal or unknown, not command completion. A newly
 received matching action can reuse its still-live handoff only with the original
-target, sources, modes, fences, expiry and shared budgets. Direct-input approval
-may remain armed for up to 15 minutes; other ordinary grants retain the
-five-minute ceiling. Changed actions need review, cancellation/disarm precede
-reuse, and unknown outcomes disarm without replay. Native consent, publication
-and usability remain deferred.
+target, sources, modes, fences, expiry and shared budgets. Direct-input review
+offers a 15-minute limit or runtime-until-revoked for the exact reviewed action;
+the latter is connection-scoped and does not persist across disconnect or app
+restart. Runs remain bounded, and the original pending-request deadline is not
+extended. Other ordinary grants retain the five-minute ceiling. Changed
+actions need review, cancellation/disarm precede reuse, and unknown outcomes
+disarm without replay. Native consent, publication and usability remain
+deferred.
 The controller and presentation capability reports expose input only to an
 explicitly selected direct-input catalog with current backend and enrollment
 qualification; this is not a grant, and production remains unavailable.

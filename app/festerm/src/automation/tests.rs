@@ -3025,7 +3025,10 @@ fn presentation_control_review_invalidates_before_first_grant_on_human_ime_and_a
         );
         assert_eq!(review.target(), target);
         assert_eq!(review.request(), &request);
-        assert_eq!(review.lifetime(), Duration::from_secs(60));
+        assert_eq!(
+            review.lifetime(),
+            festerm_automation::GrantLifetime::Finite(Duration::from_secs(60))
+        );
         let decision = review.accept_from_native();
         let approval_id = *coordinator.pending_control_reviews.keys().next().unwrap();
         assert!(coordinator.control_handoffs.is_empty());

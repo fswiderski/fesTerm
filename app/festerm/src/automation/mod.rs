@@ -151,6 +151,11 @@ pub(crate) enum NativeCommand {
         registration: ControllerRegistrationId,
         input: u64,
     },
+    ConfirmControllerInputUntilRevoked {
+        channel: u64,
+        registration: ControllerRegistrationId,
+        input: u64,
+    },
     CancelControllerInput {
         channel: u64,
         registration: ControllerRegistrationId,
@@ -212,6 +217,7 @@ impl NativeCommand {
                 | Self::ConfirmControllerMetadata { .. }
                 | Self::ReviewControllerInput { .. }
                 | Self::ConfirmControllerInput { .. }
+                | Self::ConfirmControllerInputUntilRevoked { .. }
         )
     }
 
@@ -247,6 +253,7 @@ impl NativeCommand {
                 | Self::RevokeControllerMetadata { .. }
                 | Self::ReviewControllerInput { .. }
                 | Self::ConfirmControllerInput { .. }
+                | Self::ConfirmControllerInputUntilRevoked { .. }
                 | Self::CancelControllerInput { .. }
                 | Self::DisarmControllerInput { .. }
         )
@@ -2644,6 +2651,7 @@ impl Coordinator {
             | NativeCommand::RevokeControllerMetadata { .. }
             | NativeCommand::ReviewControllerInput { .. }
             | NativeCommand::ConfirmControllerInput { .. }
+            | NativeCommand::ConfirmControllerInputUntilRevoked { .. }
             | NativeCommand::CancelControllerInput { .. }
             | NativeCommand::DisarmControllerInput { .. } => {
                 self.status = "Controller action refused without its originating native window.";

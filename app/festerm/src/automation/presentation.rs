@@ -138,7 +138,7 @@ struct DirectReuse {
     capture: controller::DirectInputReviewCapture,
     operation: Operation,
     scope: Scope,
-    expires: Instant,
+    expires: Option<Instant>,
     token: u64,
 }
 
@@ -267,7 +267,7 @@ pub(crate) struct PendingControlReview {
     target: TargetRef,
     approval_id: ApprovalId,
     request: GrantRequest,
-    lifetime: Duration,
+    lifetime: festerm_automation::GrantLifetime,
     metadata_sources: BTreeSet<TargetRef>,
     metadata: Option<NativeMetadataGrant>,
     enrollment_metadata: NativeOrdinaryEnrollmentReview,
@@ -324,8 +324,26 @@ impl PendingControlReview {
         &self.request
     }
 
-    pub(crate) fn lifetime(&self) -> Duration {
+    pub(crate) fn lifetime(&self) -> festerm_automation::GrantLifetime {
         self.lifetime
+    }
+
+    pub(crate) fn with_direct_input_lifetime(
+        mut self,
+        lifetime: festerm_automation::GrantLifetime,
+    ) -> festerm_automation::Result<Self> {
+        if self.direct_action_display.is_none()
+            || matches!(
+                lifetime,
+                festerm_automation::GrantLifetime::Finite(duration)
+                    if duration.is_zero()
+                        || duration > festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME
+            )
+        {
+            return Err(Error::InvalidRequest);
+        }
+        self.lifetime = lifetime;
+        Ok(self)
     }
 
     /// Independently authorized metadata sources included in this handoff.
@@ -863,7 +881,7 @@ impl Coordinator {
                 .association
                 .owns_direct_control(peer, handoff.grant, reuse.token)
             && broker.native_control_grant(principal, handoff.target, now) == Ok(handoff.grant)
-            && now < reuse.expires
+            && reuse.expires.is_none_or(|expires| now < expires)
             && request.capture == reuse.capture;
         if !current {
             self.revoke_reusable_direct_handoff_locked(channel, &request.association, guard)?;
@@ -878,7 +896,9 @@ impl Coordinator {
             .map(|action| action.binding)
             .ok_or(Error::BindingMismatch)?;
         let scope = reuse.scope.clone();
-        request.deadline = request.deadline.min(reuse.expires);
+        if let Some(expires) = reuse.expires {
+            request.deadline = request.deadline.min(expires);
+        }
         if now >= request.deadline {
             return Ok(None);
         }
@@ -1134,6 +1154,23 @@ impl Coordinator {
         lifetime: Duration,
         controller: &mut SessionController<S>,
     ) -> festerm_automation::Result<PendingControlReview> {
+        self.prepare_control_handoff_review_with_lifetime(
+            channel,
+            target,
+            request,
+            festerm_automation::GrantLifetime::Finite(lifetime),
+            controller,
+        )
+    }
+
+    fn prepare_control_handoff_review_with_lifetime<S: Session>(
+        &mut self,
+        channel: u64,
+        target: TargetRef,
+        request: GrantRequest,
+        lifetime: festerm_automation::GrantLifetime,
+        controller: &mut SessionController<S>,
+    ) -> festerm_automation::Result<PendingControlReview> {
         let guard = try_admission()?;
         let principal = self.admission_principal_locked(channel, &guard)?;
         let now = Instant::now();
@@ -1169,8 +1206,17 @@ impl Coordinator {
         } else {
             festerm_automation::MAX_GRANT_LIFETIME
         };
-        if lifetime.is_zero() || lifetime > max_lifetime {
-            return Err(Error::InvalidRequest);
+        match lifetime {
+            festerm_automation::GrantLifetime::Finite(duration)
+                if duration.is_zero() || duration > max_lifetime =>
+            {
+                return Err(Error::InvalidRequest);
+            }
+            festerm_automation::GrantLifetime::UntilRevoked if direct_input_only => {}
+            festerm_automation::GrantLifetime::UntilRevoked => {
+                return Err(Error::InvalidRequest);
+            }
+            festerm_automation::GrantLifetime::Finite(_) => {}
         }
         if !self.live_presentation_target(target, &guard) {
             return Err(Error::StaleTarget);
@@ -1344,15 +1390,23 @@ impl Coordinator {
             .direct_request
             .as_ref()
             .is_some_and(|fence| approval_now >= fence.deadline)
-            || review.lifetime.is_zero()
+            || matches!(
+                review.lifetime,
+                festerm_automation::GrantLifetime::Finite(duration) if duration.is_zero()
+            )
         {
             return Err(Error::Expired);
         }
         let lifetime = review.lifetime;
-        let expires = approval_now
-            .checked_add(lifetime)
-            .ok_or(Error::InvalidRequest)?;
-        let mut approval = NativeApproval::new_for_enrollment(
+        let expires = match lifetime {
+            festerm_automation::GrantLifetime::Finite(duration) => Some(
+                approval_now
+                    .checked_add(duration)
+                    .ok_or(Error::InvalidRequest)?,
+            ),
+            festerm_automation::GrantLifetime::UntilRevoked => None,
+        };
+        let mut approval = NativeApproval::with_lifetime_for_enrollment(
             review.request.clone(),
             lifetime,
             bound.enrollment_metadata.clone(),
@@ -1478,6 +1532,25 @@ impl Coordinator {
         tab: &mut SessionTab,
         sources: &Scope,
     ) -> festerm_automation::Result<PendingControlReview> {
+        self.prepare_direct_action_review_with_lifetime(
+            channel,
+            target,
+            action,
+            festerm_automation::GrantLifetime::Finite(lifetime),
+            tab,
+            sources,
+        )
+    }
+
+    pub(crate) fn prepare_direct_action_review_with_lifetime(
+        &mut self,
+        channel: u64,
+        target: TargetRef,
+        action: DirectAction<'_>,
+        lifetime: festerm_automation::GrantLifetime,
+        tab: &mut SessionTab,
+        sources: &Scope,
+    ) -> festerm_automation::Result<PendingControlReview> {
         let current = self
             .targets
             .get(&target.session())
@@ -1548,7 +1621,7 @@ impl Coordinator {
             bindings: BTreeSet::from([binding]),
             direct_read_calls: BTreeSet::new(),
         };
-        let mut review = self.prepare_control_handoff_review(
+        let mut review = self.prepare_control_handoff_review_with_lifetime(
             channel,
             target,
             request,

@@ -129,7 +129,7 @@ struct Grant {
     epoch: u64,
     request: GrantRequest,
     handoffs: BTreeMap<TargetRef, BTreeSet<TargetRef>>,
-    expires: Instant,
+    expires: Option<Instant>,
     usage: Usage,
     delivery: DeliveryEpoch,
 }
@@ -234,10 +234,10 @@ impl GrantRef<'_> {
         }
     }
 
-    fn expires(&self) -> Instant {
+    fn expires(&self) -> Option<Instant> {
         match self {
             Self::Ordinary(grant) => grant.expires,
-            Self::Metadata(grant) => grant.expires,
+            Self::Metadata(grant) => Some(grant.expires),
         }
     }
 
@@ -1004,14 +1004,21 @@ impl Broker {
                 return Err(Error::Revoked);
             }
         }
-        let max_lifetime = if is_direct_input_only_approval(&approval.request) {
+        let direct_input_only = is_direct_input_only_approval(&approval.request);
+        let max_lifetime = if direct_input_only {
             MAX_DIRECT_CONTROL_GRANT_LIFETIME
         } else {
             MAX_GRANT_LIFETIME
         };
-        if approval.lifetime.is_zero() || approval.lifetime > max_lifetime {
-            return Err(Error::InvalidRequest);
-        }
+        let expires = match approval.lifetime {
+            GrantLifetime::Finite(lifetime)
+                if !lifetime.is_zero() && lifetime <= max_lifetime =>
+            {
+                Some(now.checked_add(lifetime).ok_or(Error::InvalidRequest)?)
+            }
+            GrantLifetime::UntilRevoked if direct_input_only => None,
+            _ => return Err(Error::InvalidRequest),
+        };
         Self::validate_closure(
             &approval.request.scope.sources(),
             &approval.request.scope.control,
@@ -1068,9 +1075,6 @@ impl Broker {
             .collect();
         Self::validate_cross_closure(&approval.request.scope, &approval.handoffs, &targets)?;
         self.validate_revision_transition(connection, GrantSlot::Ordinary)?;
-        let expires = now
-            .checked_add(approval.lifetime)
-            .ok_or(Error::InvalidRequest)?;
         let epoch = self.mint()?;
         self.revoke_slot(connection, GrantSlot::Ordinary);
         let principal = self
@@ -1269,7 +1273,10 @@ impl Broker {
             .principals
             .get(&connection)
             .ok_or(Error::Unauthorized)?;
-        let ordinary = principal.grant.as_ref().filter(|grant| now < grant.expires);
+        let ordinary = principal
+            .grant
+            .as_ref()
+            .filter(|grant| grant.expires.is_none_or(|expires| now < expires));
         let metadata = principal
             .metadata
             .as_ref()
@@ -1325,7 +1332,7 @@ impl Broker {
             .get(&connection)
             .ok_or(Error::Unauthorized)?;
         let grant = principal.grant.as_ref().ok_or(Error::Revoked)?;
-        if now >= grant.expires {
+        if grant.expires.is_some_and(|expires| now >= expires) {
             return Err(Error::Expired);
         }
         Ok(grant)
@@ -1398,7 +1405,7 @@ impl Broker {
                 GrantRef::Metadata(grant)
             }
         };
-        if now >= grant.expires() {
+        if grant.expires().is_some_and(|expires| now >= expires) {
             return Err(Error::Expired);
         }
         Ok(grant)
@@ -1572,7 +1579,7 @@ impl Broker {
                 let ordinary = principal
                     .grant
                     .as_ref()
-                    .is_some_and(|grant| now >= grant.expires);
+                    .is_some_and(|grant| grant.expires.is_some_and(|expires| now >= expires));
                 let metadata = principal
                     .metadata
                     .as_ref()
@@ -1818,8 +1825,20 @@ impl Broker {
                 return Err(Error::Unauthorized);
             }
         }
+        let max_run_lifetime = match &grant {
+            GrantRef::Ordinary(grant) if is_direct_input_only_approval(&grant.request) => {
+                MAX_DIRECT_CONTROL_RUN_LIFETIME
+            }
+            _ => MAX_RUN_LIFETIME,
+        };
+        let max_run_deadline = now
+            .checked_add(max_run_lifetime)
+            .ok_or(Error::InvalidRequest)?;
         if spec.deadline <= now
-            || spec.deadline > grant.expires()
+            || spec.deadline > max_run_deadline
+            || grant
+                .expires()
+                .is_some_and(|expires| spec.deadline > expires)
             || spec.budget.operations == 0
             || spec.budget.operations > Budget::default().operations
             || spec.budget.disclosed_bytes > Budget::default().disclosed_bytes
