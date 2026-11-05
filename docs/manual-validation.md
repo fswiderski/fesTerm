@@ -2969,6 +2969,12 @@ invocation. Tests cover changed actions and fences, original expiry and shared
 budgets, queued cancellation, disarm and unknown outcomes without automatic
 replay. Native usability must verify that long actions and every source can
 actually be read and that repetition, budgets and uncertainty are understood.
+The Settings review now offers a 15-minute or runtime-until-revoked choice for
+the exact action. Until-revoked authority is connection-scoped, does not
+survive disconnect or app restart, and retains bounded per-run and pending
+request deadlines. Native usability must verify that users understand these
+limits and the independent revocation cuts; durable policy restoration remains
+unimplemented.
 A synthetic-qualified
 current-window Settings review separately describes label and lifecycle status,
 requires explicit confirmation and models cancellation and queued scoped

@@ -8,12 +8,24 @@ use std::time::{Duration, Instant};
 
 pub const MAX_GRANT_LIFETIME: Duration = Duration::from_secs(300);
 pub const MAX_DIRECT_CONTROL_GRANT_LIFETIME: Duration = Duration::from_secs(900);
+/// Maximum lifetime of an individual run, independent of grant expiry.
+pub const MAX_RUN_LIFETIME: Duration = MAX_GRANT_LIFETIME;
+/// Maximum lifetime of an individual run admitted by a direct-input grant.
+pub const MAX_DIRECT_CONTROL_RUN_LIFETIME: Duration = MAX_DIRECT_CONTROL_GRANT_LIFETIME;
 pub const MAX_PAYLOAD_BYTES: u32 = 65_536;
 pub const MAX_OBSERVATION_BYTES: u32 = 32_768;
 pub const MAX_INPUT_BYTES: u32 = 16_384;
 pub const MAX_SCOPE_TARGETS: usize = 32;
 pub const MAX_CONTROLLER_REGISTRATION_BYTES: usize = 128;
 pub const MAX_PENDING_APPROVALS: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GrantLifetime {
+    /// A grant that expires after this duration.
+    Finite(Duration),
+    /// A grant without a timer, still subject to all revocation cuts.
+    UntilRevoked,
+}
 
 macro_rules! reference_id {
     ($name:ident) => {
@@ -176,7 +188,7 @@ pub struct MetadataGrantRequest {
 /// invocation bindings, parameter/input digests and the caller identity.
 pub struct NativeApproval {
     pub(crate) request: GrantRequest,
-    pub(crate) lifetime: Duration,
+    pub(crate) lifetime: GrantLifetime,
     pub(crate) handoffs: BTreeMap<TargetRef, BTreeSet<TargetRef>>,
     pub(crate) enrollment_metadata: BTreeSet<crate::NativeEnrollmentMetadataGrant>,
     pub(crate) enrollment_disclosures:
@@ -186,6 +198,11 @@ pub struct NativeApproval {
 
 impl NativeApproval {
     pub fn new(request: GrantRequest, lifetime: Duration) -> Self {
+        Self::with_lifetime(request, GrantLifetime::Finite(lifetime))
+    }
+
+    /// Create a native approval with an explicitly selected lifetime.
+    pub fn with_lifetime(request: GrantRequest, lifetime: GrantLifetime) -> Self {
         Self {
             request,
             lifetime,
@@ -223,7 +240,16 @@ impl NativeApproval {
         lifetime: Duration,
         review: crate::NativeOrdinaryEnrollmentReview,
     ) -> Self {
-        let mut approval = Self::new(request, lifetime);
+        Self::with_lifetime_for_enrollment(request, GrantLifetime::Finite(lifetime), review)
+    }
+
+    /// Create a native approval with a selected lifetime and frozen enrollment review.
+    pub fn with_lifetime_for_enrollment(
+        request: GrantRequest,
+        lifetime: GrantLifetime,
+        review: crate::NativeOrdinaryEnrollmentReview,
+    ) -> Self {
+        let mut approval = Self::with_lifetime(request, lifetime);
         approval.enrollment_review = Some(review);
         approval
     }

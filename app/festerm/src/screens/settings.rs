@@ -1591,22 +1591,41 @@ fn automation_settings(
                             ssh_paragraph(
                                 ui,
                                 "Approval sends this exact input to the terminal queue and permits \
-                                 new intentional requests for the same action while armed, for at \
-                                 most 15 minutes and subject to shared operation budgets. Queue \
-                                 admission does not mean a command completed. Never automatically \
-                                 replay after an unknown or lost response.",
+                                 new intentional requests for the same action while armed. Choose \
+                                 a 15-minute limit or keep it armed until revoked. Until-revoked \
+                                 approval is connection-scoped and ends on disconnect, app \
+                                 shutdown, target replacement, privacy loss, disarm, or the \
+                                 existing human-input safety cuts. Queue admission does not mean \
+                                 a command completed. Never automatically replay after an unknown \
+                                 or lost response.",
                             );
                             ui.push_id(("controller-input-confirm", *token), |ui| {
                                 if ui
                                     .add_enabled(
                                         !snapshot.controller_targets_incomplete,
-                                        egui::Button::new("Approve and send this input"),
+                                        egui::Button::new("Approve and send (15 minutes)"),
                                     )
                                     .clicked()
                                 {
                                     record_automation_action(
                                         &mut command,
                                         NativeCommand::ConfirmControllerInput {
+                                            channel: row.channel,
+                                            registration: row.registration,
+                                            input: *token,
+                                        },
+                                    );
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !snapshot.controller_targets_incomplete,
+                                        egui::Button::new("Approve and send (until revoked)"),
+                                    )
+                                    .clicked()
+                                {
+                                    record_automation_action(
+                                        &mut command,
+                                        NativeCommand::ConfirmControllerInputUntilRevoked {
                                             channel: row.channel,
                                             registration: row.registration,
                                             input: *token,
@@ -2935,11 +2954,25 @@ mod tests {
         assert!(harness
             .query_by_label_contains("Never automatically replay after an unknown or lost response")
             .is_some());
-        harness.get_by_label("Approve and send this input").click();
+        harness.get_by_label("Approve and send (15 minutes)").click();
         harness.step();
         assert!(matches!(
             &harness.state().command,
             Some(NativeCommand::ConfirmControllerInput {
+                channel: 7,
+                registration: actual,
+                input: 53,
+            }) if *actual == registration
+        ));
+        harness.state_mut().command = None;
+        harness.run();
+        harness
+            .get_by_label("Approve and send (until revoked)")
+            .click();
+        harness.step();
+        assert!(matches!(
+            &harness.state().command,
+            Some(NativeCommand::ConfirmControllerInputUntilRevoked {
                 channel: 7,
                 registration: actual,
                 input: 53,
@@ -2953,7 +2986,7 @@ mod tests {
             .query_by_label_contains("Text: \"long escaped")
             .is_none());
         assert!(harness
-            .query_by_label("Approve and send this input")
+            .query_by_label("Approve and send (15 minutes)")
             .is_none());
         harness.get_by_label("Cancel requested input").click();
         harness.step();
@@ -3182,7 +3215,7 @@ mod tests {
                 let label = if disarm {
                     "Disarm terminal control"
                 } else {
-                    "Approve and send this input"
+                    "Approve and send (15 minutes)"
                 };
                 let position = harness.get_by_label(label).rect().center();
                 if accessibility {

@@ -2844,10 +2844,61 @@ fn direct_input_native_approval_allows_fifteen_minutes_but_other_grants_remain_c
         f.broker.approve(
             f.connection,
             approval_id,
-            NativeApproval::new(request, MAX_DIRECT_CONTROL_GRANT_LIFETIME),
+            NativeApproval::new(request.clone(), MAX_DIRECT_CONTROL_GRANT_LIFETIME),
             f.now,
         ),
         Err(Error::InvalidRequest)
+    );
+    assert_eq!(
+        f.broker.approve(
+            f.connection,
+            approval_id,
+            NativeApproval::with_lifetime(request, GrantLifetime::UntilRevoked),
+            f.now,
+        ),
+        Err(Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn direct_input_until_revoked_grant_survives_time_but_not_explicit_revocation() {
+    let mut f = Fixture::new();
+    let target = f.b;
+    let request = GrantRequest {
+        scope: input_scope(target),
+        bindings: BTreeSet::from([direct_input(target, digest(3), 10)]),
+        direct_read_calls: BTreeSet::new(),
+    };
+    let approval_id = f
+        .broker
+        .request_approval(f.connection, request.clone(), f.now)
+        .unwrap();
+    f.broker
+        .approve(
+            f.connection,
+            approval_id,
+            NativeApproval::with_lifetime(request, GrantLifetime::UntilRevoked)
+                .accept_control_handoff(target, BTreeSet::new()),
+            f.now,
+        )
+        .unwrap();
+    let mut overlong_run = f.spec(input_scope(target), direct_input(target, digest(3), 10));
+    overlong_run.deadline = f.now + MAX_DIRECT_CONTROL_RUN_LIFETIME + Duration::from_secs(1);
+    assert_eq!(
+        f.broker
+            .admit_run(f.connection, None, overlong_run, f.now),
+        Err(Error::InvalidRequest)
+    );
+    f.now += Duration::from_secs(24 * 60 * 60);
+    f.broker
+        .native_control_grant(f.connection, target, f.now)
+        .unwrap();
+
+    let guard = automation_admission_lock().unwrap();
+    f.broker.revoke_ordinary(f.connection, &guard);
+    assert_eq!(
+        f.broker.native_control_grant(f.connection, target, f.now),
+        Err(Error::Revoked)
     );
 }
 

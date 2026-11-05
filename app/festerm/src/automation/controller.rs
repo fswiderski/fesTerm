@@ -1210,6 +1210,7 @@ pub(super) fn command(
         action,
         NativeCommand::ReviewControllerInput { .. }
             | NativeCommand::ConfirmControllerInput { .. }
+            | NativeCommand::ConfirmControllerInputUntilRevoked { .. }
             | NativeCommand::CancelControllerInput { .. }
             | NativeCommand::DisarmControllerInput { .. }
     ) {
@@ -1323,11 +1324,33 @@ fn direct_input_command(
             coordinator.status = "Preparing the exact input and metadata disclosure for review.";
             Ok(())
         }
-        NativeCommand::ConfirmControllerInput {
-            channel,
-            registration,
-            input,
-        } => {
+        action @ (NativeCommand::ConfirmControllerInput { .. }
+        | NativeCommand::ConfirmControllerInputUntilRevoked { .. }) => {
+            let (channel, registration, input, lifetime) = match action {
+                NativeCommand::ConfirmControllerInput {
+                    channel,
+                    registration,
+                    input,
+                } => (
+                    channel,
+                    registration,
+                    input,
+                    festerm_automation::GrantLifetime::Finite(
+                        festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME,
+                    ),
+                ),
+                NativeCommand::ConfirmControllerInputUntilRevoked {
+                    channel,
+                    registration,
+                    input,
+                } => (
+                    channel,
+                    registration,
+                    input,
+                    festerm_automation::GrantLifetime::UntilRevoked,
+                ),
+                _ => unreachable!("matched direct input confirmation"),
+            };
             let guard = try_metadata_admission()?;
             if !coordinator.direct_input_qualified() {
                 return Err(CommandError::Refused(Refusal::Unavailable));
@@ -1365,7 +1388,10 @@ fn direct_input_command(
                 return Err(CommandError::Refused(Refusal::NotAuthorized));
             }
             let capture = capture.clone();
-            let review = (**review).clone();
+            let review = (**review)
+                .clone()
+                .with_direct_input_lifetime(lifetime)
+                .map_err(metadata_command_error)?;
             let binding = *review
                 .request()
                 .bindings
@@ -3660,7 +3686,9 @@ pub(super) mod tests {
                         };
                         assert_eq!(
                             review.lifetime(),
-                            festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME
+                            festerm_automation::GrantLifetime::Finite(
+                                festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME
+                            )
                         );
                         let row = registration_row(&coordinator, &[&app], 1, registration);
                         let ControllerInputView::Reviewing {
@@ -3692,10 +3720,18 @@ pub(super) mod tests {
                             &mut coordinator,
                             &[&app],
                             WindowId::PRIMARY,
-                            NativeCommand::ConfirmControllerInput {
-                                channel: 1,
-                                registration,
-                                input: token,
+                            if text == "sdk admitted" {
+                                NativeCommand::ConfirmControllerInputUntilRevoked {
+                                    channel: 1,
+                                    registration,
+                                    input: token,
+                                }
+                            } else {
+                                NativeCommand::ConfirmControllerInput {
+                                    channel: 1,
+                                    registration,
+                                    input: token,
+                                }
                             },
                         );
                         coordinator.synthetic_direct_input_lost_after_commit =

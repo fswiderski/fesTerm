@@ -356,6 +356,7 @@ impl FesTermApp {
             | NativeCommand::RevokeControllerMetadata { .. }
             | NativeCommand::ReviewControllerInput { .. }
             | NativeCommand::ConfirmControllerInput { .. }
+            | NativeCommand::ConfirmControllerInputUntilRevoked { .. }
             | NativeCommand::DisarmControllerInput { .. }
             | NativeCommand::CaptureWorkflow(_) => {}
         }

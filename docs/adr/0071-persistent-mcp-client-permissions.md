@@ -71,6 +71,14 @@ cryptographic tests. The native identity registry, durable grant restoration
 and platform qualification remain implementation gates. No production
 permission feature is enabled by this proposal.
 
+The synthetic direct-input review offers either a 15-minute grant or a
+runtime-only until-revoked grant for the exact reviewed action. The latter is
+bound to the current connection and is cut by disconnect, app shutdown, target
+replacement, privacy loss, disarm and the existing human-input safety cuts;
+it is not restored after reconnect. Per-run and pending-request deadlines stay
+bounded. This does not implement durable client policy or explicit target
+rebind.
+
 ## Alternatives considered
 
 - Reuse `clientInfo` or a caller-supplied stable ID: spoofable and not an
@@ -118,7 +126,9 @@ production support.
   target replacement requires rebind; revocation, privacy loss and disconnect
   cut runtime authority and queued delivery; exact direct-input approvals may
   remain armed for up to 15 minutes while other ordinary grants retain the
-  five-minute ceiling; until-revoked policy obeys its distinct lifecycle rules.
+  five-minute ceiling; a runtime until-revoked direct-input grant survives
+  elapsed time but remains explicitly revocable and cannot create unbounded
+  runs; pending request deadlines remain unchanged.
 - **Native/manual evidence required:** Extend desktop MCP checks for key
   pairing, requested/default and Advanced permission review, reconnect,
   revocation, lock/sleep and target replacement on each supported platform.
