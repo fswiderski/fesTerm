@@ -41,7 +41,8 @@ execution authority, even when its encoded action is a short command.
    user-approved actions and exact target binding; the latter choice removes
    only its timer, not its revocation conditions. It does not make an arbitrary
    client-provided gesture claim authoritative. An action outside the approved
-   set requires a new native review.
+   set requires a new native review. Extending a direct-input grant does not
+   extend the pending request's own deadline.
 5. Durable grants require a stable, authenticated client identity established
    by proof of possession of a client-owned Ed25519 key through a versioned
    authentication extension. The local adapter sends a fresh 32-byte
