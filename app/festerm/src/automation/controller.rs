@@ -1966,7 +1966,7 @@ pub(super) fn prepare_direct_input_review(
         preparation.channel,
         preparation.target,
         action,
-        deadline.saturating_duration_since(now),
+        festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME,
         tab,
         &capture.sources.scope,
     )?;
@@ -3650,6 +3650,18 @@ pub(super) mod tests {
                             )
                         })
                         .unwrap();
+                        let pending = coordinator.peers[&1]
+                            .controller
+                            .direct_input
+                            .as_ref()
+                            .unwrap();
+                        let DirectInputPhase::Reviewing { review, .. } = &pending.phase else {
+                            panic!("expected frozen input review");
+                        };
+                        assert_eq!(
+                            review.lifetime(),
+                            festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME
+                        );
                         let row = registration_row(&coordinator, &[&app], 1, registration);
                         let ControllerInputView::Reviewing {
                             action,

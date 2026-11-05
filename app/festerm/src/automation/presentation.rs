@@ -1164,7 +1164,12 @@ impl Coordinator {
         if request.scope.control.len() != 1 || !request.scope.control.contains(&target) {
             return Err(Error::InvalidRequest);
         }
-        if lifetime.is_zero() || lifetime > festerm_automation::MAX_GRANT_LIFETIME {
+        let max_lifetime = if direct_input_only {
+            festerm_automation::MAX_DIRECT_CONTROL_GRANT_LIFETIME
+        } else {
+            festerm_automation::MAX_GRANT_LIFETIME
+        };
+        if lifetime.is_zero() || lifetime > max_lifetime {
             return Err(Error::InvalidRequest);
         }
         if !self.live_presentation_target(target, &guard) {
@@ -1335,17 +1340,15 @@ impl Coordinator {
             .copied()
             .collect();
         let approval_now = Instant::now();
-        let lifetime = bound
+        if bound
             .direct_request
             .as_ref()
-            .map_or(review.lifetime, |fence| {
-                review
-                    .lifetime
-                    .min(fence.deadline.saturating_duration_since(approval_now))
-            });
-        if lifetime.is_zero() {
+            .is_some_and(|fence| approval_now >= fence.deadline)
+            || review.lifetime.is_zero()
+        {
             return Err(Error::Expired);
         }
+        let lifetime = review.lifetime;
         let expires = approval_now
             .checked_add(lifetime)
             .ok_or(Error::InvalidRequest)?;

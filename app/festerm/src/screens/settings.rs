@@ -1592,7 +1592,7 @@ fn automation_settings(
                                 ui,
                                 "Approval sends this exact input to the terminal queue and permits \
                                  new intentional requests for the same action while armed, for at \
-                                 most five minutes and subject to shared operation budgets. Queue \
+                                 most 15 minutes and subject to shared operation budgets. Queue \
                                  admission does not mean a command completed. Never automatically \
                                  replay after an unknown or lost response.",
                             );

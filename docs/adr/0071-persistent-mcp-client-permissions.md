@@ -41,7 +41,8 @@ execution authority, even when its encoded action is a short command.
    user-approved actions and exact target binding; the latter choice removes
    only its timer, not its revocation conditions. It does not make an arbitrary
    client-provided gesture claim authoritative. An action outside the approved
-   set requires a new native review.
+   set requires a new native review. Extending a direct-input grant does not
+   extend the pending request's own deadline.
 5. Durable grants require a stable, authenticated client identity established
    by proof of possession of a client-owned Ed25519 key through a versioned
    authentication extension. The local adapter sends a fresh 32-byte
@@ -115,8 +116,9 @@ production support.
   policy; untrusted client names/claims and unknown capabilities refuse;
   Advanced selections narrow authority; status remains independent of control;
   target replacement requires rebind; revocation, privacy loss and disconnect
-  cut runtime authority and queued delivery; 15-minute expiry and until-revoked
-  policy obey distinct lifecycle rules.
+  cut runtime authority and queued delivery; exact direct-input approvals may
+  remain armed for up to 15 minutes while other ordinary grants retain the
+  five-minute ceiling; until-revoked policy obeys its distinct lifecycle rules.
 - **Native/manual evidence required:** Extend desktop MCP checks for key
   pairing, requested/default and Advanced permission review, reconnect,
   revocation, lock/sleep and target replacement on each supported platform.
